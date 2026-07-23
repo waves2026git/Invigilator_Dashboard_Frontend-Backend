@@ -1,0 +1,25 @@
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8001:8001"
+    env_file:
+      - ./backend/.env
+    dns:
+      - 8.8.8.8
+    volumes:
+      - ../backend/storage/audio:/app/storage/audio
+    environment:
+      - AUDIO_DIR=/app/storage/audio
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_BACKEND_URL: http://localhost:8001
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+    restart: unless-stopped

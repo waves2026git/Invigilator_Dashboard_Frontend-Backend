@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 
 interface Exam {
@@ -22,12 +22,19 @@ const STATUS_COLORS: Record<string, string> = {
   closed: 'bg-red-100 text-red-800',
 }
 
+const STATUS_FILTERS = ['all', 'draft', 'published', 'standby', 'active', 'closed'] as const
+type StatusFilter = typeof STATUS_FILTERS[number]
+
+type SortOrder = 'newest' | 'oldest'
+
 export default function ExamControlPage() {
   const { token } = useAuth()
   const [exams, setExams] = useState<Exam[]>([])
   const [loading, setLoading] = useState(true)
   const [updating, setUpdating] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
+  const [sortOrder, setSortOrder] = useState<SortOrder>('newest')
 
   const fetchExams = async () => {
     try {
@@ -65,12 +72,55 @@ export default function ExamControlPage() {
     }
   }
 
+  // Mongo ObjectIds are chronologically ordered (first 4 bytes = timestamp),
+  // so lexicographic comparison on _id is a reliable stand-in for created_at
+  // ordering without needing a schema/API change.
+  const displayedExams = useMemo(() => {
+    const filtered = statusFilter === 'all'
+      ? exams
+      : exams.filter(e => (e.status || 'draft') === statusFilter)
+
+    const sorted = [...filtered].sort((a, b) => {
+      const cmp = a._id.localeCompare(b._id)
+      return sortOrder === 'newest' ? -cmp : cmp
+    })
+
+    return sorted
+  }, [exams, statusFilter, sortOrder])
+
   if (loading) return <div className="p-6 text-gray-500">Loading exams...</div>
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-bold text-gray-900">Exam Control</h1>
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <h1 className="text-2xl font-bold text-gray-900">Exam Control</h1>
+
+        <div className="flex items-center gap-2">
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
+            className="px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none"
+          >
+            {STATUS_FILTERS.map(s => (
+              <option key={s} value={s}>
+                {s === 'all' ? 'All statuses' : s.charAt(0).toUpperCase() + s.slice(1)}
+              </option>
+            ))}
+          </select>
+
+          <select
+            value={sortOrder}
+            onChange={(e) => setSortOrder(e.target.value as SortOrder)}
+            className="px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none"
+          >
+            <option value="newest">Newest first</option>
+            <option value="oldest">Oldest first</option>
+          </select>
+        </div>
+      </div>
+
       {error && <div className="bg-red-50 text-red-700 p-3 rounded-lg">{error}</div>}
+
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
         <table className="min-w-full divide-y divide-gray-200">
           <thead className="bg-gray-50">
@@ -84,7 +134,7 @@ export default function ExamControlPage() {
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-200">
-            {exams.map(exam => (
+            {displayedExams.map(exam => (
               <tr key={exam._id}>
                 <td className="px-6 py-4 text-sm font-medium text-gray-900">{exam.exam_name}</td>
                 <td className="px-6 py-4 text-sm text-gray-500">{exam.exam_code}</td>
@@ -102,6 +152,16 @@ export default function ExamControlPage() {
                   </span>
                 </td>
                 <td className="px-6 py-4 space-x-2">
+                  {exam.status === 'published' && (
+                    <button
+                      onClick={() => updateStatus(exam, 'active')}
+                      disabled={updating === exam._id}
+                      className="px-4 py-2 text-sm font-medium rounded-lg bg-green-600 text-white hover:bg-green-700 disabled:opacity-50"
+                      title="Start this exam now, instead of waiting for its scheduled standby time"
+                    >
+                      {updating === exam._id ? '...' : 'Activate Now'}
+                    </button>
+                  )}
                   {exam.status === 'standby' && (
                     <button
                       onClick={() => updateStatus(exam, 'active')}
@@ -120,7 +180,7 @@ export default function ExamControlPage() {
                       {updating === exam._id ? '...' : 'Close Exam'}
                     </button>
                   )}
-                  {!['standby', 'active'].includes(exam.status) && (
+                  {!['published', 'standby', 'active'].includes(exam.status) && (
                     <span className="text-sm text-gray-400">No action</span>
                   )}
                 </td>
@@ -128,8 +188,10 @@ export default function ExamControlPage() {
             ))}
           </tbody>
         </table>
-        {exams.length === 0 && (
-          <div className="p-6 text-center text-gray-500">No exams found</div>
+        {displayedExams.length === 0 && (
+          <div className="p-6 text-center text-gray-500">
+            {exams.length === 0 ? 'No exams found' : 'No exams match this filter'}
+          </div>
         )}
       </div>
     </div>

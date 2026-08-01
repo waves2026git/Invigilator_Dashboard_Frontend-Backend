@@ -29,12 +29,42 @@ class ExamStartUpdate(BaseModel):
     exam_started_at: datetime
 
 
+def _build_assignment_package(assignment: dict) -> dict:
+    """Build the WebSocket payload shape the device expects for an assignment."""
+    return {
+        "event": "assignment",
+        "package": {
+            "assignment_id": str(assignment["_id"]),
+            "device_uuid": assignment["device_uuid"],
+            "device_number": assignment["device_number"],
+            "student_id": assignment["student_id"],
+            "student_name": assignment["student_name"],
+            "exam_id": assignment["exam_id"],
+            "exam_name": assignment["exam_name"],
+            "exam_code": assignment["exam_code"],
+            "duration_minutes": assignment.get("duration_minutes", 60),
+            "instructions": assignment.get("instructions"),
+            "questions": assignment.get("questions", []),
+            "created_at": assignment["created_at"].isoformat(),
+        }
+    }
+
+
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_assignment(payload: AssignmentCreate, _: str = Depends(get_current_invigilator)):
     """Invigilator creates assignment: device + student + exam."""
     svc = AssignmentService()
     try:
         assignment = await svc.create_assignment(payload)
+
+        # Push the assignment to the device immediately over WebSocket so it
+        # starts downloading right away, instead of waiting for the device's
+        # next reconnect/poll cycle.
+        await manager.send_to_device(
+            assignment["device_uuid"],
+            _build_assignment_package(assignment),
+        )
+
         return {
             "message": "Assignment created",
             "assignment_id": str(assignment["_id"]),
@@ -60,25 +90,8 @@ async def get_device_assignment(device_uuid: str):
     assignment = await svc.get_device_assignment(device_uuid)
     if not assignment:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No active assignment")
-    
-    # Return full package for device
-    return {
-        "event": "assignment",
-        "package": {
-            "assignment_id": str(assignment["_id"]),
-            "device_uuid": assignment["device_uuid"],
-            "device_number": assignment["device_number"],
-            "student_id": assignment["student_id"],
-            "student_name": assignment["student_name"],
-            "exam_id": assignment["exam_id"],
-            "exam_name": assignment["exam_name"],
-            "exam_code": assignment["exam_code"],
-            "duration_minutes": assignment.get("duration_minutes", 60),
-            "instructions": assignment.get("instructions"),
-            "questions": assignment.get("questions", []),
-            "created_at": assignment["created_at"].isoformat(),
-        }
-    }
+
+    return _build_assignment_package(assignment)
 
 
 @router.get("/{assignment_id}", response_model=AssignmentResponse)
@@ -106,12 +119,12 @@ async def update_download_status(assignment_id: str, payload: DownloadStatusUpda
     """Pi-client updates download status."""
     if payload.download_status not in ("pending", "downloading", "ready"):
         raise HTTPException(status_code=400, detail="Invalid download_status")
-    
+
     svc = AssignmentService()
     assignment = await svc.update_download_status(assignment_id, payload.download_status)
     if not assignment:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Assignment not found")
-    
+
     # Broadcast to dashboard
     await manager.broadcast_dashboard({
         "event": "download_status",
@@ -119,7 +132,7 @@ async def update_download_status(assignment_id: str, payload: DownloadStatusUpda
         "device_number": assignment.get("device_number"),
         "download_status": payload.download_status,
     })
-    
+
     return {"message": "Download status updated", "download_status": payload.download_status}
 
 
@@ -130,7 +143,7 @@ async def update_exam_started(assignment_id: str, payload: ExamStartUpdate):
     assignment = await svc.update_exam_started(assignment_id, payload.exam_started_at)
     if not assignment:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Assignment not found")
-    
+
     # Broadcast to dashboard
     await manager.broadcast_dashboard({
         "event": "exam_started",
@@ -140,21 +153,21 @@ async def update_exam_started(assignment_id: str, payload: ExamStartUpdate):
         "exam_started_at": payload.exam_started_at.isoformat(),
         "duration_minutes": assignment.get("duration_minutes"),
     })
-    
+
     return {"message": "Exam start recorded", "exam_started_at": payload.exam_started_at.isoformat()}
 
 
 @router.delete("/device/{device_uuid}")
 async def reset_device_assignment(device_uuid: str, _: str = Depends(get_current_invigilator)):
-    """Reset device session — delete its active assignment."""
+    """Reset device session — delete all active assignments for this device."""
     svc = AssignmentService()
     deleted = await svc.delete_by_device(device_uuid)
     if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No assignment found")
-    
+
     # Notify device to reset
     await manager.send_to_device(device_uuid, {"event": "reset"})
-    
+
     return {"message": "Device reset", "device_uuid": device_uuid}
 
 

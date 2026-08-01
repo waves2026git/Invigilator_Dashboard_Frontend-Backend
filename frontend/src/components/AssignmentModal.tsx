@@ -30,7 +30,8 @@ export function AssignmentModal({ deviceNumber, deviceUuid, onClose, onAssigned 
   const [exams, setExams] = useState<Exam[]>([])
   const [selectedExam, setSelectedExam] = useState('')
   const [students, setStudents] = useState<Student[]>([])
-  const [selectedStudent, setSelectedStudent] = useState('')
+  const [selectedStudents, setSelectedStudents] = useState<Set<string>>(new Set())
+  const [studentSearch, setStudentSearch] = useState('')
   const [loading, setLoading] = useState(true)
   const [loadingStudents, setLoadingStudents] = useState(false)
   const [submitting, setSubmitting] = useState(false)
@@ -60,7 +61,8 @@ export function AssignmentModal({ deviceNumber, deviceUuid, onClose, onAssigned 
   useEffect(() => {
     if (!selectedExam) {
       setStudents([])
-      setSelectedStudent('')
+      setSelectedStudents(new Set())
+      setStudentSearch('')
       return
     }
 
@@ -82,9 +84,48 @@ export function AssignmentModal({ deviceNumber, deviceUuid, onClose, onAssigned 
     fetchStudents()
   }, [selectedExam, token])
 
+  const filteredStudents = students.filter((s) => {
+    const q = studentSearch.trim().toLowerCase()
+    if (!q) return true
+    return (
+      s.name.toLowerCase().includes(q) ||
+      s.student_id.toString().includes(q)
+    )
+  })
+
+  const toggleStudent = (studentId: string) => {
+    setSelectedStudents((prev) => {
+      const next = new Set(prev)
+      if (next.has(studentId)) {
+        next.delete(studentId)
+      } else {
+        next.add(studentId)
+      }
+      return next
+    })
+  }
+
+  const allFilteredSelected =
+    filteredStudents.length > 0 &&
+    filteredStudents.every((s) => selectedStudents.has(s.student_id.toString()))
+
+  const handleSelectAll = () => {
+    setSelectedStudents((prev) => {
+      const next = new Set(prev)
+      if (allFilteredSelected) {
+        // Unselect all currently-filtered students
+        filteredStudents.forEach((s) => next.delete(s.student_id.toString()))
+      } else {
+        // Select all currently-filtered students
+        filteredStudents.forEach((s) => next.add(s.student_id.toString()))
+      }
+      return next
+    })
+  }
+
   const handleAssign = async () => {
-    if (!selectedStudent || !selectedExam) {
-      setError('Please select both exam and student')
+    if (selectedStudents.size === 0 || !selectedExam) {
+      setError('Please select an exam and at least one student')
       return
     }
 
@@ -92,22 +133,38 @@ export function AssignmentModal({ deviceNumber, deviceUuid, onClose, onAssigned 
     setError('')
 
     try {
-      const response = await fetch(`${BACKEND_URL}/api/assignments`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          device_number: deviceNumber,
-          student_id: selectedStudent,
-          exam_id: selectedExam,
-        }),
-      })
+      const studentIds = Array.from(selectedStudents)
+      const results = await Promise.allSettled(
+        studentIds.map((studentId) =>
+          fetch(`${BACKEND_URL}/api/assignments`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`
+            },
+            body: JSON.stringify({
+              device_number: deviceNumber,
+              student_id: studentId,
+              exam_id: selectedExam,
+            }),
+          }).then(async (response) => {
+            if (!response.ok) {
+              const data = await response.json().catch(() => ({}))
+              throw new Error(data.detail || `Assignment failed for student ${studentId}`)
+            }
+            return response
+          })
+        )
+      )
 
-      if (!response.ok) {
-        const data = await response.json()
-        throw new Error(data.detail || 'Assignment failed')
+      const failures = results.filter((r) => r.status === 'rejected') as PromiseRejectedResult[]
+      if (failures.length > 0) {
+        const messages = failures.map((f) => f.reason?.message || 'Unknown error')
+        throw new Error(
+          failures.length === studentIds.length
+            ? messages[0]
+            : `${failures.length} of ${studentIds.length} assignments failed: ${messages[0]}`
+        )
       }
 
       onAssigned()
@@ -151,7 +208,8 @@ export function AssignmentModal({ deviceNumber, deviceUuid, onClose, onAssigned 
                 value={selectedExam}
                 onChange={(e) => {
                   setSelectedExam(e.target.value)
-                  setSelectedStudent('')
+                  setSelectedStudents(new Set())
+                  setStudentSearch('')
                 }}
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
               >
@@ -167,40 +225,71 @@ export function AssignmentModal({ deviceNumber, deviceUuid, onClose, onAssigned 
               )}
             </div>
 
-            {/* Step 2: Select Student (appears after exam selected) */}
+            {/* Step 2: Select Students (appears after exam selected) */}
             {selectedExam && (
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  2. Select Student (enrolled in this exam)
-                </label>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="block text-sm font-medium text-gray-700">
+                    2. Select Students (enrolled in this exam)
+                    {selectedStudents.size > 0 && (
+                      <span className="text-gray-500 font-normal"> — {selectedStudents.size} selected</span>
+                    )}
+                  </label>
+                  {students.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={handleSelectAll}
+                      className="text-sm text-blue-600 hover:text-blue-800 font-medium"
+                    >
+                      {allFilteredSelected ? 'Unselect All' : 'Assign All'}
+                    </button>
+                  )}
+                </div>
+
+                {students.length > 0 && (
+                  <input
+                    type="text"
+                    value={studentSearch}
+                    onChange={(e) => setStudentSearch(e.target.value)}
+                    placeholder="Search by name or ID..."
+                    className="w-full px-3 py-2 mb-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                  />
+                )}
+
                 {loadingStudents ? (
                   <div className="text-center py-4 text-gray-500">Loading students...</div>
                 ) : students.length === 0 ? (
                   <div className="text-center py-4 text-gray-500 bg-gray-50 rounded-lg">
                     No unassigned students for this exam
                   </div>
+                ) : filteredStudents.length === 0 ? (
+                  <div className="text-center py-4 text-gray-500 bg-gray-50 rounded-lg">
+                    No students match "{studentSearch}"
+                  </div>
                 ) : (
                   <div className="border border-gray-200 rounded-lg divide-y max-h-60 overflow-y-auto">
-                    {students.map((s) => (
-                      <label
-                        key={s._id}
-                        className={`flex items-center p-3 cursor-pointer hover:bg-gray-50 ${
-                          selectedStudent === s.student_id.toString() ? 'bg-blue-50' : ''
-                        }`}
-                      >
-                        <input
-                          type="radio"
-                          name="student"
-                          value={s.student_id}
-                          checked={selectedStudent === s.student_id.toString()}
-                          onChange={() => setSelectedStudent(s.student_id.toString())}
-                          className="w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500"
-                        />
-                        <span className="ml-3 text-sm text-gray-900">
-                          {s.name} <span className="text-gray-500">(ID: {s.student_id})</span>
-                        </span>
-                      </label>
-                    ))}
+                    {filteredStudents.map((s) => {
+                      const idStr = s.student_id.toString()
+                      const checked = selectedStudents.has(idStr)
+                      return (
+                        <label
+                          key={s._id}
+                          className={`flex items-center p-3 cursor-pointer hover:bg-gray-50 ${
+                            checked ? 'bg-blue-50' : ''
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleStudent(idStr)}
+                            className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                          />
+                          <span className="ml-3 text-sm text-gray-900">
+                            {s.name} <span className="text-gray-500">(ID: {s.student_id})</span>
+                          </span>
+                        </label>
+                      )
+                    })}
                   </div>
                 )}
               </div>
@@ -215,10 +304,14 @@ export function AssignmentModal({ deviceNumber, deviceUuid, onClose, onAssigned 
               </button>
               <button
                 onClick={handleAssign}
-                disabled={submitting || !selectedStudent || !selectedExam}
+                disabled={submitting || selectedStudents.size === 0 || !selectedExam}
                 className="flex-1 py-2 px-4 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {submitting ? 'Assigning...' : 'Assign Exam'}
+                {submitting
+                  ? 'Assigning...'
+                  : selectedStudents.size > 1
+                  ? `Assign Exam (${selectedStudents.size})`
+                  : 'Assign Exam'}
               </button>
             </div>
           </div>

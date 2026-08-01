@@ -182,8 +182,8 @@ class AssignmentService:
         )
 
     async def delete_by_device(self, device_uuid: str) -> bool:
-        """Delete active assignment for device."""
-        result = await self._db.assignments.delete_one({
+        """Delete all active assignments for device (a device should never have more than one, but reset should be thorough)."""
+        result = await self._db.assignments.delete_many({
             "device_uuid": device_uuid,
             "status": {"$in": ["assigned", "downloading", "ready", "in_progress"]}
         })

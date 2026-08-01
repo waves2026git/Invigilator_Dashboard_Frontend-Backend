@@ -4,6 +4,7 @@ import { useDevices } from '../hooks/useDevices'
 import { AssignmentModal } from '../components/AssignmentModal'
 import type { Device } from '../services/api'
 import { BACKEND_URL } from '../services/api'
+import { useAuth } from '../contexts/AuthContext'
 
 function StatusBadge({ status }: { status: Device['status'] }) {
   const styles = {
@@ -19,7 +20,7 @@ function StatusBadge({ status }: { status: Device['status'] }) {
   )
 }
 
-function DeviceCard({ device, onAssign, onReset, onContinue }: { device: Device; onAssign: () => void; onReset: () => void; onContinue: () => void }) {
+function DeviceCard({ device, onAssign, onReset, onContinue, actionError, actionLoading }: { device: Device; onAssign: () => void; onReset: () => void; onContinue: () => void; actionError?: string; actionLoading?: boolean }) {
   const timeSince = device.last_seen
     ? new Date(device.last_seen).toLocaleString()
     : 'Never'
@@ -101,6 +102,12 @@ function DeviceCard({ device, onAssign, onReset, onContinue }: { device: Device;
         </div>
       </div>
 
+      {actionError && (
+        <div className="mb-3 text-xs text-red-600 bg-red-50 rounded-lg p-2">
+          {actionError}
+        </div>
+      )}
+
       {device.status === 'online' && !a && (
         <button
           onClick={onAssign}
@@ -113,13 +120,15 @@ function DeviceCard({ device, onAssign, onReset, onContinue }: { device: Device;
         <div className="flex gap-2">
           <button
             onClick={onContinue}
-            className="flex-1 py-2 px-4 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700 transition-colors"
+            disabled={actionLoading}
+            className="flex-1 py-2 px-4 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            Continue
+            {actionLoading ? 'Working...' : 'Continue'}
           </button>
           <button
             onClick={onReset}
-            className="flex-1 py-2 px-4 bg-red-600 text-white font-medium rounded-lg hover:bg-red-700 transition-colors"
+            disabled={actionLoading}
+            className="flex-1 py-2 px-4 bg-red-600 text-white font-medium rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Reset
           </button>
@@ -131,23 +140,57 @@ function DeviceCard({ device, onAssign, onReset, onContinue }: { device: Device;
 
 export default function DeviceListPage() {
   const { data: devices, isLoading, error, refetch } = useDevices()
+  const { token } = useAuth()
   const [assignDevice, setAssignDevice] = useState<Device | null>(null)
+  const [actionErrors, setActionErrors] = useState<Record<string, string>>({})
+  const [actionLoading, setActionLoading] = useState<Record<string, boolean>>({})
 
   const handleReset = async (device: Device) => {
     if (!confirm(`Reset device ${device.device_number || device.device_name}?`)) return
+    setActionErrors((prev) => ({ ...prev, [device.device_uuid]: '' }))
+    setActionLoading((prev) => ({ ...prev, [device.device_uuid]: true }))
     try {
-      await fetch(`${BACKEND_URL}/api/assignments/device/${device.device_uuid}`, { method: 'DELETE' })
+      const res = await fetch(`${BACKEND_URL}/api/assignments/device/${device.device_uuid}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.detail || `Reset failed (${res.status})`)
+      }
       refetch()
     } catch (e) {
       console.error('Reset failed', e)
+      setActionErrors((prev) => ({
+        ...prev,
+        [device.device_uuid]: e instanceof Error ? e.message : 'Reset failed',
+      }))
+    } finally {
+      setActionLoading((prev) => ({ ...prev, [device.device_uuid]: false }))
     }
   }
 
   const handleContinue = async (device: Device) => {
+    setActionErrors((prev) => ({ ...prev, [device.device_uuid]: '' }))
+    setActionLoading((prev) => ({ ...prev, [device.device_uuid]: true }))
     try {
-      await fetch(`${BACKEND_URL}/api/assignments/device/${device.device_uuid}/continue`, { method: 'POST' })
+      const res = await fetch(`${BACKEND_URL}/api/assignments/device/${device.device_uuid}/continue`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.detail || `Continue failed (${res.status})`)
+      }
+      refetch()
     } catch (e) {
       console.error('Continue failed', e)
+      setActionErrors((prev) => ({
+        ...prev,
+        [device.device_uuid]: e instanceof Error ? e.message : 'Continue failed',
+      }))
+    } finally {
+      setActionLoading((prev) => ({ ...prev, [device.device_uuid]: false }))
     }
   }
 
@@ -206,6 +249,8 @@ export default function DeviceListPage() {
             onAssign={() => setAssignDevice(device)}
             onReset={() => handleReset(device)}
             onContinue={() => handleContinue(device)}
+            actionError={actionErrors[device.device_uuid]}
+            actionLoading={actionLoading[device.device_uuid]}
           />
         ))}
       </div>

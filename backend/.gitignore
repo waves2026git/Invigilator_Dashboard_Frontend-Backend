@@ -40,3 +40,4 @@ MANIFEST
 # mypy / type checkers
 .mypy_cache/
 .pytype/
+/storage/

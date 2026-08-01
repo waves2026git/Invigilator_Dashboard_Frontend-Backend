@@ -20,11 +20,37 @@ function StatusBadge({ status }: { status: Device['status'] }) {
   )
 }
 
-function DeviceCard({ device, onAssign, onReset, onContinue, actionError, actionLoading }: { device: Device; onAssign: () => void; onReset: () => void; onContinue: () => void; actionError?: string; actionLoading?: boolean }) {
+const DOWNLOAD_LABELS: Record<string, string> = {
+  pending: 'Pending',
+  downloading: 'Downloading',
+  ready: 'Downloaded',
+}
+
+const DOWNLOAD_TOOLTIPS: Record<string, string> = {
+  pending: 'Exam audio has not started downloading to the device yet.',
+  downloading: 'Exam audio is downloading to the device.',
+  ready: 'Exam audio has finished downloading — ready to start.',
+}
+
+function DeviceCard({
+  device,
+  onAssign,
+  onReset,
+  onPrimaryAction,
+  actionError,
+  actionLoading,
+}: {
+  device: Device
+  onAssign: () => void
+  onReset: () => void
+  onPrimaryAction: () => void
+  actionError?: string
+  actionLoading?: boolean
+}) {
   const timeSince = device.last_seen
     ? new Date(device.last_seen).toLocaleString()
     : 'Never'
-  
+
   const a = device.assignment
   const downloadColors: Record<string, string> = {
     pending: 'bg-gray-100 text-gray-600',
@@ -41,6 +67,17 @@ function DeviceCard({ device, onAssign, onReset, onContinue, actionError, action
     const remaining = Math.max(0, Math.floor((endAt - Date.now()) / 1000 / 60))
     timerDisplay = remaining > 0 ? `${remaining} min left` : 'Time up'
     completionTime = new Date(endAt).toLocaleTimeString()
+  }
+
+  const examActive = a?.exam_status === 'active'
+
+  // Single adaptive primary action:
+  // - not yet downloaded -> "Start Download" (resumes/kicks off download)
+  // - downloaded, exam not active yet -> "Start Exam" (activates the exam)
+  // - exam already active -> no button, nothing left to trigger
+  let primaryLabel: string | null = null
+  if (a && !examActive) {
+    primaryLabel = a.download_status === 'ready' ? 'Start Exam' : 'Start Download'
   }
 
   return (
@@ -61,9 +98,18 @@ function DeviceCard({ device, onAssign, onReset, onContinue, actionError, action
           <div className="font-medium text-blue-900">{a.exam_name}</div>
           <div className="text-blue-700">Student: {a.student_name}</div>
           <div className="flex items-center gap-2 mt-2 flex-wrap">
-            <span className={`px-2 py-0.5 rounded text-xs ${downloadColors[a.download_status]}`}>
-              {a.download_status}
+            <span
+              className={`px-2 py-0.5 rounded text-xs inline-flex items-center gap-1 ${downloadColors[a.download_status]}`}
+              title={DOWNLOAD_TOOLTIPS[a.download_status]}
+            >
+              {DOWNLOAD_LABELS[a.download_status] || a.download_status}
+              <span className="opacity-60">ⓘ</span>
             </span>
+            {examActive && (
+              <span className="px-2 py-0.5 rounded text-xs bg-green-100 text-green-800">
+                In progress
+              </span>
+            )}
             {a.exam_started_at && (
               <span className="text-xs text-blue-600">
                 Started: {new Date(a.exam_started_at).toLocaleTimeString()}
@@ -116,23 +162,25 @@ function DeviceCard({ device, onAssign, onReset, onContinue, actionError, action
           Assign Exam
         </button>
       )}
+
+      {primaryLabel && (
+        <button
+          onClick={onPrimaryAction}
+          disabled={actionLoading}
+          className="w-full mb-2 py-2 px-4 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {actionLoading ? 'Working...' : primaryLabel}
+        </button>
+      )}
+
       {a && (
-        <div className="flex gap-2">
-          <button
-            onClick={onContinue}
-            disabled={actionLoading}
-            className="flex-1 py-2 px-4 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {actionLoading ? 'Working...' : 'Continue'}
-          </button>
-          <button
-            onClick={onReset}
-            disabled={actionLoading}
-            className="flex-1 py-2 px-4 bg-red-600 text-white font-medium rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            Reset
-          </button>
-        </div>
+        <button
+          onClick={onReset}
+          disabled={actionLoading}
+          className="w-full py-1.5 px-4 text-sm font-medium text-red-600 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          Reset
+        </button>
       )}
     </div>
   )
@@ -170,24 +218,48 @@ export default function DeviceListPage() {
     }
   }
 
-  const handleContinue = async (device: Device) => {
+  // Single adaptive primary action handler — decides which endpoint to call
+  // based on the device's current assignment state, so the invigilator only
+  // ever sees one relevant button instead of several overlapping controls.
+  const handlePrimaryAction = async (device: Device) => {
+    const a = device.assignment
+    if (!a) return
+
     setActionErrors((prev) => ({ ...prev, [device.device_uuid]: '' }))
     setActionLoading((prev) => ({ ...prev, [device.device_uuid]: true }))
+
     try {
-      const res = await fetch(`${BACKEND_URL}/api/assignments/device/${device.device_uuid}/continue`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}))
-        throw new Error(data.detail || `Continue failed (${res.status})`)
+      if (a.download_status !== 'ready') {
+        // Not downloaded yet -> resume/kick off download.
+        const res = await fetch(`${BACKEND_URL}/api/assignments/device/${device.device_uuid}/continue`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}))
+          throw new Error(data.detail || `Start download failed (${res.status})`)
+        }
+      } else {
+        // Downloaded and waiting -> activate the exam.
+        const res = await fetch(`${BACKEND_URL}/api/data/exams/${a.exam_id}/status`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ status: 'active' }),
+        })
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}))
+          throw new Error(data.detail || `Start exam failed (${res.status})`)
+        }
       }
       refetch()
     } catch (e) {
-      console.error('Continue failed', e)
+      console.error('Primary action failed', e)
       setActionErrors((prev) => ({
         ...prev,
-        [device.device_uuid]: e instanceof Error ? e.message : 'Continue failed',
+        [device.device_uuid]: e instanceof Error ? e.message : 'Action failed',
       }))
     } finally {
       setActionLoading((prev) => ({ ...prev, [device.device_uuid]: false }))
@@ -233,8 +305,8 @@ export default function DeviceListPage() {
             <span className="text-sm font-bold text-green-600">{ready.length}/{assigned.length} ready</span>
           </div>
           <div className="w-full bg-gray-200 rounded-full h-2.5">
-            <div 
-              className="bg-green-600 h-2.5 rounded-full transition-all" 
+            <div
+              className="bg-green-600 h-2.5 rounded-full transition-all"
               style={{ width: `${progressPct}%` }}
             />
           </div>
@@ -243,12 +315,12 @@ export default function DeviceListPage() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
         {devices.map((device) => (
-          <DeviceCard 
-            key={device.id} 
-            device={device} 
+          <DeviceCard
+            key={device.id}
+            device={device}
             onAssign={() => setAssignDevice(device)}
             onReset={() => handleReset(device)}
-            onContinue={() => handleContinue(device)}
+            onPrimaryAction={() => handlePrimaryAction(device)}
             actionError={actionErrors[device.device_uuid]}
             actionLoading={actionLoading[device.device_uuid]}
           />

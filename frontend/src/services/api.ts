@@ -1,5 +1,7 @@
 export interface DeviceAssignment {
+  exam_id: string
   exam_name: string
+  exam_status: string | null
   student_name: string
   download_status: 'pending' | 'downloading' | 'ready'
   exam_started_at: string | null

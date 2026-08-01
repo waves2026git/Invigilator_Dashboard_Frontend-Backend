@@ -57,14 +57,6 @@ async def create_assignment(payload: AssignmentCreate, _: str = Depends(get_curr
     try:
         assignment = await svc.create_assignment(payload)
 
-        # Push the assignment to the device immediately over WebSocket so it
-        # starts downloading right away, instead of waiting for the device's
-        # next reconnect/poll cycle.
-        await manager.send_to_device(
-            assignment["device_uuid"],
-            _build_assignment_package(assignment),
-        )
-
         return {
             "message": "Assignment created",
             "assignment_id": str(assignment["_id"]),

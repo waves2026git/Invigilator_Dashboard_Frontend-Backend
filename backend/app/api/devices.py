@@ -55,6 +55,7 @@ async def list_devices() -> list[DeviceResponse]:
     
     # Filter: only show if exam is published/standby/active
     active_exam_ids = set()
+    exam_status_by_id: dict[str, str] = {}
     if assignments:
         exam_ids = list({a["exam_id"] for a in assignments})
         from bson import ObjectId
@@ -63,6 +64,7 @@ async def list_devices() -> list[DeviceResponse]:
             "status": {"$in": ["published", "standby", "active"]}
         }).to_list(500)
         active_exam_ids = {str(e["_id"]) for e in exams}
+        exam_status_by_id = {str(e["_id"]): e.get("status") for e in exams}
     
     assign_by_uuid = {
         a["device_uuid"]: a 
@@ -76,7 +78,9 @@ async def list_devices() -> list[DeviceResponse]:
         assignment_info = None
         if a:
             assignment_info = {
+                "exam_id": a.get("exam_id"),
                 "exam_name": a.get("exam_name"),
+                "exam_status": exam_status_by_id.get(a.get("exam_id")),
                 "student_name": a.get("student_name"),
                 "download_status": a.get("download_status", "pending"),
                 "exam_started_at": a.get("exam_started_at").isoformat() if a.get("exam_started_at") else None,

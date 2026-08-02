@@ -130,6 +130,20 @@ class AssignmentService:
             logger.warning("Device not connected, assignment saved | device=%s", 
                           payload.device_number)
 
+        # If the exam was already active before this assignment was created,
+        # the device would otherwise never learn to start — the activation
+        # broadcast only fires once, at the moment someone calls the
+        # activate endpoint. Nudge it immediately so newly-assigned devices
+        # for an already-running exam start right away instead of hanging
+        # on "Waiting for exam" forever.
+        if exam.get("status") == "active":
+            await manager.send_to_device(device["device_uuid"], {
+                "event": "exam_status",
+                "exam_id": payload.exam_id,
+                "status": "active",
+            })
+            logger.info("Exam already active — sent immediate start signal | device=%s", payload.device_number)
+
         return assignment_doc
 
     async def get_device_assignment(self, device_uuid: str) -> Optional[dict]:
@@ -182,8 +196,8 @@ class AssignmentService:
         )
 
     async def delete_by_device(self, device_uuid: str) -> bool:
-        """Delete active assignment for device."""
-        result = await self._db.assignments.delete_one({
+        """Delete all active assignments for device (a device should never have more than one, but reset should be thorough)."""
+        result = await self._db.assignments.delete_many({
             "device_uuid": device_uuid,
             "status": {"$in": ["assigned", "downloading", "ready", "in_progress"]}
         })

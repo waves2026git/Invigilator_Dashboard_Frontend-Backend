@@ -94,9 +94,9 @@ async def update_exam_status(
     
     current = exam.get("status")
     
-    # Validate transitions
-    if body.status == "active" and current != "standby":
-        raise HTTPException(status_code=400, detail="Can only start exam when status is 'standby'")
+    # Validate transitions — allow starting from standby (normal flow) or
+    if body.status == "active" and current not in ("standby", "published"):
+        raise HTTPException(status_code=400, detail="Can only start exam when status is 'standby' or 'published'")
     if body.status == "closed" and current != "active":
         raise HTTPException(status_code=400, detail="Can only close exam when status is 'active'")
     

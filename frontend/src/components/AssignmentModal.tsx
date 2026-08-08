@@ -30,7 +30,7 @@ export function AssignmentModal({ deviceNumber, deviceUuid, onClose, onAssigned 
   const [exams, setExams] = useState<Exam[]>([])
   const [selectedExam, setSelectedExam] = useState('')
   const [students, setStudents] = useState<Student[]>([])
-  const [selectedStudents, setSelectedStudents] = useState<Set<string>>(new Set())
+  const [selectedStudent, setSelectedStudent] = useState('')
   const [studentSearch, setStudentSearch] = useState('')
   const [loading, setLoading] = useState(true)
   const [loadingStudents, setLoadingStudents] = useState(false)
@@ -61,7 +61,7 @@ export function AssignmentModal({ deviceNumber, deviceUuid, onClose, onAssigned 
   useEffect(() => {
     if (!selectedExam) {
       setStudents([])
-      setSelectedStudents(new Set())
+      setSelectedStudent('')
       setStudentSearch('')
       return
     }
@@ -93,39 +93,9 @@ export function AssignmentModal({ deviceNumber, deviceUuid, onClose, onAssigned 
     )
   })
 
-  const toggleStudent = (studentId: string) => {
-    setSelectedStudents((prev) => {
-      const next = new Set(prev)
-      if (next.has(studentId)) {
-        next.delete(studentId)
-      } else {
-        next.add(studentId)
-      }
-      return next
-    })
-  }
-
-  const allFilteredSelected =
-    filteredStudents.length > 0 &&
-    filteredStudents.every((s) => selectedStudents.has(s.student_id.toString()))
-
-  const handleSelectAll = () => {
-    setSelectedStudents((prev) => {
-      const next = new Set(prev)
-      if (allFilteredSelected) {
-        // Unselect all currently-filtered students
-        filteredStudents.forEach((s) => next.delete(s.student_id.toString()))
-      } else {
-        // Select all currently-filtered students
-        filteredStudents.forEach((s) => next.add(s.student_id.toString()))
-      }
-      return next
-    })
-  }
-
   const handleAssign = async () => {
-    if (selectedStudents.size === 0 || !selectedExam) {
-      setError('Please select an exam and at least one student')
+    if (!selectedStudent || !selectedExam) {
+      setError('Please select an exam and a student')
       return
     }
 
@@ -133,38 +103,21 @@ export function AssignmentModal({ deviceNumber, deviceUuid, onClose, onAssigned 
     setError('')
 
     try {
-      const studentIds = Array.from(selectedStudents)
-      const results = await Promise.allSettled(
-        studentIds.map((studentId) =>
-          fetch(`${BACKEND_URL}/api/assignments`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${token}`
-            },
-            body: JSON.stringify({
-              device_number: deviceNumber,
-              student_id: studentId,
-              exam_id: selectedExam,
-            }),
-          }).then(async (response) => {
-            if (!response.ok) {
-              const data = await response.json().catch(() => ({}))
-              throw new Error(data.detail || `Assignment failed for student ${studentId}`)
-            }
-            return response
-          })
-        )
-      )
-
-      const failures = results.filter((r) => r.status === 'rejected') as PromiseRejectedResult[]
-      if (failures.length > 0) {
-        const messages = failures.map((f) => f.reason?.message || 'Unknown error')
-        throw new Error(
-          failures.length === studentIds.length
-            ? messages[0]
-            : `${failures.length} of ${studentIds.length} assignments failed: ${messages[0]}`
-        )
+      const response = await fetch(`${BACKEND_URL}/api/assignments`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          device_number: deviceNumber,
+          student_id: selectedStudent,
+          exam_id: selectedExam,
+        }),
+      })
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}))
+        throw new Error(data.detail || 'Assignment failed')
       }
 
       onAssigned()
@@ -208,7 +161,7 @@ export function AssignmentModal({ deviceNumber, deviceUuid, onClose, onAssigned 
                 value={selectedExam}
                 onChange={(e) => {
                   setSelectedExam(e.target.value)
-                  setSelectedStudents(new Set())
+                  setSelectedStudent('')
                   setStudentSearch('')
                 }}
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
@@ -230,20 +183,8 @@ export function AssignmentModal({ deviceNumber, deviceUuid, onClose, onAssigned 
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <label className="block text-sm font-medium text-gray-700">
-                    2. Select Students (enrolled in this exam)
-                    {selectedStudents.size > 0 && (
-                      <span className="text-gray-500 font-normal"> — {selectedStudents.size} selected</span>
-                    )}
+                    2. Select Student (enrolled in this exam)
                   </label>
-                  {students.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={handleSelectAll}
-                      className="text-sm text-blue-600 hover:text-blue-800 font-medium"
-                    >
-                      {allFilteredSelected ? 'Unselect All' : 'Assign All'}
-                    </button>
-                  )}
                 </div>
 
                 {students.length > 0 && (
@@ -270,7 +211,7 @@ export function AssignmentModal({ deviceNumber, deviceUuid, onClose, onAssigned 
                   <div className="border border-gray-200 rounded-lg divide-y max-h-60 overflow-y-auto">
                     {filteredStudents.map((s) => {
                       const idStr = s.student_id.toString()
-                      const checked = selectedStudents.has(idStr)
+                      const checked = selectedStudent === idStr
                       return (
                         <label
                           key={s._id}
@@ -279,10 +220,11 @@ export function AssignmentModal({ deviceNumber, deviceUuid, onClose, onAssigned 
                           }`}
                         >
                           <input
-                            type="checkbox"
+                            type="radio"
+                            name="selected-student"
                             checked={checked}
-                            onChange={() => toggleStudent(idStr)}
-                            className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                            onChange={() => setSelectedStudent(idStr)}
+                            className="w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500"
                           />
                           <span className="ml-3 text-sm text-gray-900">
                             {s.name} <span className="text-gray-500">(ID: {s.student_id})</span>
@@ -304,14 +246,10 @@ export function AssignmentModal({ deviceNumber, deviceUuid, onClose, onAssigned 
               </button>
               <button
                 onClick={handleAssign}
-                disabled={submitting || selectedStudents.size === 0 || !selectedExam}
+                disabled={submitting || !selectedStudent || !selectedExam}
                 className="flex-1 py-2 px-4 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {submitting
-                  ? 'Assigning...'
-                  : selectedStudents.size > 1
-                  ? `Assign Exam (${selectedStudents.size})`
-                  : 'Assign Exam'}
+                {submitting ? 'Assigning...' : 'Assign Exam'}
               </button>
             </div>
           </div>

@@ -48,6 +48,16 @@ class AssignmentService:
         if exam.get("status") not in ("published", "standby", "active"):
             raise ValueError("Exam must be published, standby, or active")
 
+        # A device can only ever run one student at a time — reject if it's
+        # already got an active assignment instead of silently piling up more.
+        existing_device_assignment = await self.get_device_assignment(device["device_uuid"])
+        if existing_device_assignment:
+            raise ValueError(
+                f"Device {payload.device_number} is already assigned to "
+                f"{existing_device_assignment.get('student_name')} for "
+                f"{existing_device_assignment.get('exam_name')} — reset the device first"
+            )
+
         # 4. Build assignment document
         now = now_ist()
         questions = []

@@ -11,7 +11,7 @@ export function useDevices() {
   const query = useQuery({
     queryKey: ['devices'],
     queryFn: fetchDevices,
-    refetchInterval: 30000, // HTTP fallback if WS drops
+    refetchInterval: 5000, // HTTP fallback if WS drops
     staleTime: 10000,
   })
 

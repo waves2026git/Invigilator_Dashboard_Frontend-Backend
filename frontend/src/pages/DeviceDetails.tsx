@@ -1,10 +1,42 @@
+import { useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useDevice } from '../hooks/useDevices'
+import { useAuth } from '../contexts/AuthContext'
+import { BACKEND_URL } from '../services/api'
 import type { Device } from '../services/api'
 
 export default function DeviceDetailsPage() {
   const { id } = useParams<{ id: string }>()
-  const { data: device, isLoading, error } = useDevice(id || '')
+  const { data: device, isLoading, error, refetch } = useDevice(id || '')
+  const { token } = useAuth()
+  const [clearing, setClearing] = useState(false)
+  const [clearError, setClearError] = useState('')
+
+  const handleClearData = async () => {
+    if (!device) return
+    if (!confirm(
+      `Clear locally stored recordings on ${device.device_number || device.device_name}? ` +
+      `Only recordings already confirmed uploaded to the server will be deleted.`
+    )) return
+
+    setClearing(true)
+    setClearError('')
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/devices/${device.device_uuid}/clear-data`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.detail || `Clear failed (${res.status})`)
+      }
+      refetch()
+    } catch (e) {
+      setClearError(e instanceof Error ? e.message : 'Clear failed')
+    } finally {
+      setClearing(false)
+    }
+  }
 
   if (isLoading) {
     return (
@@ -71,6 +103,33 @@ export default function DeviceDetailsPage() {
             <DetailRow label="Created At" value={new Date(device.created_at).toLocaleString()} />
             <DetailRow label="Last Seen" value={device.last_seen ? new Date(device.last_seen).toLocaleString() : 'Never'} />
             <DetailRow label="Updated At" value={new Date(device.updated_at).toLocaleString()} />
+          </div>
+
+          <hr className="border-gray-200" />
+
+          <div>
+            {clearError && (
+              <div className="mb-3 text-sm text-red-600 bg-red-50 rounded-lg p-2.5">
+                {clearError}
+              </div>
+            )}
+            <button
+              onClick={handleClearData}
+              disabled={clearing || !!device.assignment}
+              className="w-full py-2.5 px-4 text-sm font-medium text-red-600 border border-red-200 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {clearing ? 'Clearing...' : 'Clear Device Data'}
+            </button>
+            {device.assignment && (
+              <p className="text-xs text-gray-400 mt-1.5">
+                Disabled while an assignment is active — reset the device first.
+              </p>
+            )}
+            {!device.assignment && (
+              <p className="text-xs text-gray-400 mt-1.5">
+                Deletes locally stored recordings on the device, but only ones already confirmed uploaded to the server.
+              </p>
+            )}
           </div>
         </div>
       </div>

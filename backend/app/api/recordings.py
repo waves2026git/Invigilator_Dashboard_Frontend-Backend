@@ -16,6 +16,28 @@ router = APIRouter(prefix="/api/recordings", tags=["recordings"])
 logger = get_logger("app.api.recordings")
 
 
+@router.get("/verify")
+async def verify_recording_uploaded(exam_code: int, student_id: int, question_num: int):
+    """
+    Check whether a specific recording is confirmed present in the answers
+    collection. Used by pi-client's "clear device data" to decide which local
+    files are safe to delete. Local filenames only carry exam_code (the human
+    code), so it's resolved to exam_id here before checking answers.
+    """
+    db = get_db()
+    exam = await db.exams.find_one({"exam_code": exam_code})
+    if not exam:
+        return {"uploaded": False}
+
+    answer = await db.answers.find_one({
+        "exam_id": str(exam["_id"]),
+        "student_id": student_id,
+        "question_id": question_num,
+        "audio_path": {"$ne": None},
+    })
+    return {"uploaded": answer is not None}
+
+
 # NOTE: Specific routes like /missing and /complete must be declared BEFORE
 # the generic /{assignment_id}/{question_num} route below. FastAPI/Starlette
 # matches routes in registration order, and {question_num} is a greedy path

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, Depends
 
 from app.database.session import get_db
 from app.config.logging_config import get_logger
@@ -10,6 +10,9 @@ from app.schemas.device import (
     RegisterResponse,
 )
 from app.services.device_service import DeviceService
+from app.services.assignment_service import AssignmentService
+from app.websocket.manager import manager
+from app.auth import get_current_invigilator
 
 router = APIRouter(prefix="/api/devices", tags=["devices"])
 logger = get_logger("app.api.devices")
@@ -99,3 +102,25 @@ async def get_device(device_id: str) -> DeviceResponse:
     if device is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found.")
     return DeviceResponse(**{**device, "_id": str(device["_id"])})
+
+
+@router.post("/{device_uuid}/clear-data")
+async def clear_device_data(device_uuid: str, _: str = Depends(get_current_invigilator)):
+    """
+    Signal a device to verify (against the server) and delete every locally
+    stored recording that's confirmed uploaded. Blocked while the device has
+    an active assignment, since an exam in progress may still be recording
+    or queuing uploads.
+    """
+    if await AssignmentService().get_device_assignment(device_uuid):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Device has an active assignment — reset it or wait for submission before clearing data",
+        )
+
+    sent = await manager.send_to_device(device_uuid, {"event": "clear_data"})
+    if not sent:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device is not connected")
+
+    logger.info("Clear-data signal sent", extra={"_bind": {"device_uuid": device_uuid}})
+    return {"message": "Clear data signal sent", "device_uuid": device_uuid}

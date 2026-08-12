@@ -12,6 +12,7 @@ from typing import Optional
 from fastapi import WebSocket, WebSocketDisconnect
 
 from app.config.logging_config import get_logger
+from app.models.device import DeviceStatus
 from app.utils.timezone import now_ist
 
 logger = get_logger("app.websocket.manager")
@@ -44,6 +45,12 @@ class ConnectionManager:
         async with self._lock:
             self._device_connections.pop(device_uuid, None)
         logger.info("Device WebSocket disconnected | uuid=%s", device_uuid)
+
+        from app.database import get_db
+        await get_db().devices.update_one(
+            {"device_uuid": device_uuid},
+            {"$set": {"status": DeviceStatus.OFFLINE, "updated_at": now_ist()}},
+        )
         await self.broadcast_dashboard({"event": "device_disconnected", "device_uuid": device_uuid})
 
     async def send_to_device(self, device_uuid: str, message: dict) -> bool:

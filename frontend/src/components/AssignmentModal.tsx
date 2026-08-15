@@ -23,7 +23,7 @@ interface AssignmentModalProps {
   onAssigned: () => void
 }
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8001'
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000'
 
 export function AssignmentModal({ deviceNumber, deviceUuid, onClose, onAssigned }: AssignmentModalProps) {
   const { token } = useAuth()

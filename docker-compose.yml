@@ -1,25 +1,13 @@
 services:
-  backend:
-    build: ./backend
-    ports:
-      - "8001:8001"
-    env_file:
-      - ./backend/.env
-    dns:
-      - 8.8.8.8
-    volumes:
-      - ../backend/storage/audio:/app/storage/audio
-    environment:
-      - AUDIO_DIR=/app/storage/audio
-    restart: unless-stopped
-
+  # The invigilator dashboard backend that used to run here (port 8001) was
+  # merged into Exam-Device_Backend (run separately, port 8000) — see that
+  # repo's app/routes/{devices,assignments,websocket}.py. This frontend
+  # points at the unified backend via VITE_BACKEND_URL.
   frontend:
     build:
       context: ./frontend
       args:
-        VITE_BACKEND_URL: http://localhost:8001
+        VITE_BACKEND_URL: http://localhost:8000
     ports:
       - "8080:80"
-    depends_on:
-      - backend
     restart: unless-stopped

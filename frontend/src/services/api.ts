@@ -26,8 +26,9 @@ export interface Device {
   assignment: DeviceAssignment | null
 }
 
-export const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8001'
-export const WS_BASE_URL = import.meta.env.VITE_WS_URL?.replace('/ws', '') || 'http://localhost:8001'
+// Backend migration: invigilator dashboard backend merged into the main
+// Exam-Device_Backend (port 8000) — see backend migration notes.
+export const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000'
 
 export async function fetchDevices(): Promise<Device[]> {
   const response = await fetch(`${BACKEND_URL}/api/devices`)
@@ -43,9 +44,4 @@ export async function fetchDevice(id: string): Promise<Device> {
     throw new Error('Failed to fetch device')
   }
   return response.json()
-}
-
-export function getWsUrl(): string {
-  const base = BACKEND_URL.replace('http://', 'ws://').replace('https://', 'wss://')
-  return `${base}/ws/dashboard`
 }
